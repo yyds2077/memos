@@ -35,9 +35,7 @@ export interface Props {
   className?: string;
   cacheKey?: string;
   placeholder?: string;
-  // The name of the memo to be edited.
   memoName?: string;
-  // The name of the parent memo if the memo is a comment.
   parentMemoName?: string;
   autoFocus?: boolean;
   onConfirm?: (memoName: string) => void;
@@ -63,8 +61,11 @@ const MemoEditor = (props: Props) => {
   const memoStore = useMemoStore();
   const resourceStore = useResourceStore();
   const currentUser = useCurrentUser();
+  const isAnonymous = !currentUser;
+  const DEFAULT_VISIBILITY = isAnonymous ? Visibility.PROTECTED : Visibility.PRIVATE;
+
   const [state, setState] = useState<State>({
-    memoVisibility: Visibility.PRIVATE,
+    memoVisibility: DEFAULT_VISIBILITY,
     resourceList: [],
     relationList: [],
     location: undefined,
@@ -75,7 +76,7 @@ const MemoEditor = (props: Props) => {
   const [displayTime, setDisplayTime] = useState<Date | undefined>();
   const [hasContent, setHasContent] = useState<boolean>(false);
   const editorRef = useRef<EditorRefActions>(null);
-  const userSetting = userStore.userSetting as UserSetting;
+  const userSetting = userStore.userSetting as UserSetting || {};
   const contentCacheKey = `${currentUser?.name || "anonymous"}-${cacheKey || ""}`;
   const [contentCache, setContentCache] = useLocalStorage<string>(contentCacheKey, "");
   const referenceRelations = memoName
@@ -98,15 +99,22 @@ const MemoEditor = (props: Props) => {
   }, [autoFocus]);
 
   useEffect(() => {
-    let visibility = userSetting.memoVisibility;
-    if (workspaceMemoRelatedSetting.disallowPublicVisibility && visibility === "PUBLIC") {
-      visibility = "PRIVATE";
+    if (isAnonymous) {
+      setState((prevState) => ({
+        ...prevState,
+        memoVisibility: Visibility.PROTECTED,
+      }));
+    } else {
+      let visibility = userSetting.memoVisibility || convertVisibilityToString(DEFAULT_VISIBILITY);
+      if (workspaceMemoRelatedSetting.disallowPublicVisibility && visibility === "PUBLIC") {
+        visibility = "PRIVATE";
+      }
+      setState((prevState) => ({
+        ...prevState,
+        memoVisibility: convertVisibilityFromString(visibility),
+      }));
     }
-    setState((prevState) => ({
-      ...prevState,
-      memoVisibility: convertVisibilityFromString(visibility),
-    }));
-  }, [userSetting.memoVisibility, workspaceMemoRelatedSetting.disallowPublicVisibility]);
+  }, [isAnonymous, userSetting.memoVisibility, workspaceMemoRelatedSetting.disallowPublicVisibility]);
 
   useAsyncEffect(async () => {
     if (!memoName) {
@@ -293,8 +301,6 @@ const MemoEditor = (props: Props) => {
     });
     const content = editorRef.current?.getContent() ?? "";
     try {
-      const userName = currentUser ? currentUser.name : "nick"; // 匿名用户逻辑
-      // Update memo.
       if (memoName) {
         const prevMemo = await memoStore.getOrFetchMemoByName(memoName);
         if (prevMemo) {
@@ -326,7 +332,6 @@ const MemoEditor = (props: Props) => {
           }
         }
       } else {
-        // Create memo or memo comment.
         const request = !parentMemoName
           ? memoStore.createMemo({
               content,
@@ -463,22 +468,29 @@ const MemoEditor = (props: Props) => {
         <Divider className="!mt-2 opacity-40" />
         <div className="w-full flex flex-row justify-between items-center py-3 dark:border-t-zinc-500">
           <div className="relative flex flex-row justify-start items-center" onFocus={(e) => e.stopPropagation()}>
-            <Select
-              variant="plain"
-              value={state.memoVisibility}
-              startDecorator={<VisibilityIcon visibility={state.memoVisibility} />}
-              onChange={(_, visibility) => {
-                if (visibility) {
-                  handleMemoVisibilityChange(visibility);
-                }
-              }}
-            >
-              {[Visibility.PRIVATE, Visibility.PROTECTED, Visibility.PUBLIC].map((item) => (
-                <Option key={item} value={item} className="whitespace-nowrap">
-                  {t(`memo.visibility.${convertVisibilityToString(item).toLowerCase()}` as any)}
-                </Option>
-              ))}
-            </Select>
+            {isAnonymous ? (
+              <div className="flex items-center">
+                <VisibilityIcon visibility={Visibility.PROTECTED} />
+                <span className="ml-2">{t(`memo.visibility.protected`)}</span>
+              </div>
+            ) : (
+              <Select
+                variant="plain"
+                value={state.memoVisibility}
+                startDecorator={<VisibilityIcon visibility={state.memoVisibility} />}
+                onChange={(_, visibility) => {
+                  if (visibility) {
+                    handleMemoVisibilityChange(visibility);
+                  }
+                }}
+              >
+                {[Visibility.PRIVATE, Visibility.PROTECTED, Visibility.PUBLIC].map((item) => (
+                  <Option key={item} value={item} className="whitespace-nowrap">
+                    {t(`memo.visibility.${convertVisibilityToString(item).toLowerCase()}` as any)}
+                  </Option>
+                ))}
+              </Select>
+            )}
           </div>
           <div className="shrink-0 flex flex-row justify-end items-center gap-2">
             {props.onCancel && (
@@ -493,7 +505,7 @@ const MemoEditor = (props: Props) => {
               endDecorator={<SendIcon className="w-4 h-auto" />}
               onClick={handleSaveBtnClick}
             >
-              {currentUser ? t("editor.save") : "Post as Anonymous"}
+              {isAnonymous ? t("editor.save-as-anonymous") : t("editor.save")}
             </Button>
           </div>
         </div>

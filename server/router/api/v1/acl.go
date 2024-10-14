@@ -43,6 +43,11 @@ func NewGRPCAuthInterceptor(store *store.Store, secret string) *GRPCAuthIntercep
 
 // AuthenticationInterceptor is the unary interceptor for gRPC API.
 func (in *GRPCAuthInterceptor) AuthenticationInterceptor(ctx context.Context, request any, serverInfo *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	// 允许 CreateMemoComment 无需认证
+	if serverInfo.FullMethod == "/memos.api.v1.MemoService/CreateMemoComment" {
+		return handler(ctx, request)
+	}
+
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return nil, status.Errorf(codes.Unauthenticated, "failed to parse metadata from incoming context")
