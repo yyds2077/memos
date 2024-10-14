@@ -76,7 +76,7 @@ const MemoEditor = (props: Props) => {
   const [hasContent, setHasContent] = useState<boolean>(false);
   const editorRef = useRef<EditorRefActions>(null);
   const userSetting = userStore.userSetting as UserSetting;
-  const contentCacheKey = `${currentUser.name}-${cacheKey || ""}`;
+  const contentCacheKey = `${currentUser?.name || "anonymous"}-${cacheKey || ""}`;
   const [contentCache, setContentCache] = useLocalStorage<string>(contentCacheKey, "");
   const referenceRelations = memoName
     ? state.relationList.filter(
@@ -293,6 +293,7 @@ const MemoEditor = (props: Props) => {
     });
     const content = editorRef.current?.getContent() ?? "";
     try {
+      const userName = currentUser ? currentUser.name : "nick"; // 匿名用户逻辑
       // Update memo.
       if (memoName) {
         const prevMemo = await memoStore.getOrFetchMemoByName(memoName);
@@ -492,7 +493,7 @@ const MemoEditor = (props: Props) => {
               endDecorator={<SendIcon className="w-4 h-auto" />}
               onClick={handleSaveBtnClick}
             >
-              {t("editor.save")}
+              {currentUser ? t("editor.save") : "Post as Anonymous"}
             </Button>
           </div>
         </div>

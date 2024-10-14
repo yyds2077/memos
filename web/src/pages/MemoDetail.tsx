@@ -36,7 +36,9 @@ const MemoDetail = () => {
   const commentRelations =
     memo?.relations.filter((relation) => relation.relatedMemo === memo.name && relation.type === MemoRelation_Type.COMMENT) || [];
   const comments = commentRelations.map((relation) => memoStore.getMemoByName(relation.memo)).filter((memo) => memo) as any as Memo[];
-  const showCreateCommentButton = workspaceMemoRelatedSetting.enableComment && currentUser;
+  
+  // 修改逻辑：无论是否登录都允许评论
+  const showCreateCommentButton = workspaceMemoRelatedSetting.enableComment;
 
   // Prepare memo.
   useEffect(() => {

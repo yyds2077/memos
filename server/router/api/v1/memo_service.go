@@ -435,67 +435,94 @@ func (s *APIV1Service) DeleteMemo(ctx context.Context, request *v1pb.DeleteMemoR
 }
 
 func (s *APIV1Service) CreateMemoComment(ctx context.Context, request *v1pb.CreateMemoCommentRequest) (*v1pb.Memo, error) {
-	id, err := ExtractMemoIDFromName(request.Name)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
-	}
-	relatedMemo, err := s.Store.GetMemo(ctx, &store.FindMemo{ID: &id})
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get memo")
-	}
+    id, err := ExtractMemoIDFromName(request.Name)
+    if err != nil {
+        return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
+    }
 
-	// Create the comment memo first.
-	memo, err := s.CreateMemo(ctx, request.Comment)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create memo")
-	}
+    // 获取被评论的 Memo
+    relatedMemo, err := s.Store.GetMemo(ctx, &store.FindMemo{ID: &id})
+    if err != nil {
+        return nil, status.Errorf(codes.Internal, "failed to get memo")
+    }
 
-	// Build the relation between the comment memo and the original memo.
-	memoID, err := ExtractMemoIDFromName(memo.Name)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
-	}
-	_, err = s.Store.UpsertMemoRelation(ctx, &store.MemoRelation{
-		MemoID:        memoID,
-		RelatedMemoID: relatedMemo.ID,
-		Type:          store.MemoRelationComment,
-	})
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create memo relation")
-	}
-	creatorID, err := ExtractUserIDFromName(memo.Creator)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid memo creator")
-	}
-	if memo.Visibility != v1pb.Visibility_PRIVATE && creatorID != relatedMemo.CreatorID {
-		activity, err := s.Store.CreateActivity(ctx, &store.Activity{
-			CreatorID: creatorID,
-			Type:      store.ActivityTypeMemoComment,
-			Level:     store.ActivityLevelInfo,
-			Payload: &storepb.ActivityPayload{
-				MemoComment: &storepb.ActivityMemoCommentPayload{
-					MemoId:        memoID,
-					RelatedMemoId: relatedMemo.ID,
-				},
-			},
-		})
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to create activity")
-		}
-		if _, err := s.Store.CreateInbox(ctx, &store.Inbox{
-			SenderID:   creatorID,
-			ReceiverID: relatedMemo.CreatorID,
-			Status:     store.UNREAD,
-			Message: &storepb.InboxMessage{
-				Type:       storepb.InboxMessage_MEMO_COMMENT,
-				ActivityId: &activity.ID,
-			},
-		}); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to create inbox")
-		}
-	}
+    // 检查当前用户是否登录
+    user, err := s.GetCurrentUser(ctx)
+    if err != nil {
+        return nil, status.Errorf(codes.Internal, "failed to get current user")
+    }
 
-	return memo, nil
+    // 如果用户未登录，则使用默认的匿名用户 "nick"
+    if user == nil {
+        user, err = s.Store.GetUser(ctx, &store.FindUser{
+            Username: "nick",
+        })
+        if err != nil || user == nil {
+            return nil, status.Errorf(codes.Internal, "failed to get anonymous user 'nick'")
+        }
+    }
+
+    // 创建评论 Memo
+    create := &store.Memo{
+        UID:        shortuuid.New(),
+        CreatorID:  user.ID,  // 使用当前用户或匿名用户的 ID
+        Content:    request.Comment.Content,
+        Visibility: convertVisibilityToStore(request.Comment.Visibility),
+    }
+
+    memo, err := s.Store.CreateMemo(ctx, create)
+    if err != nil {
+        return nil, status.Errorf(codes.Internal, "failed to create memo")
+    }
+
+    // 关联评论 Memo 和被评论的 Memo
+    memoID, err := ExtractMemoIDFromName(memo.Name)
+    if err != nil {
+        return nil, status.Errorf(codes.InvalidArgument, "invalid memo name: %v", err)
+    }
+
+    _, err = s.Store.UpsertMemoRelation(ctx, &store.MemoRelation{
+        MemoID:        memoID,
+        RelatedMemoID: relatedMemo.ID,
+        Type:          store.MemoRelationComment,
+    })
+    if err != nil {
+        return nil, status.Errorf(codes.Internal, "failed to create memo relation")
+    }
+
+    // 如果评论的可见性不是私有的，并且评论者与被评论者不同，创建通知
+    if memo.Visibility != v1pb.Visibility_PRIVATE && user.ID != relatedMemo.CreatorID {
+        activity, err := s.Store.CreateActivity(ctx, &store.Activity{
+            CreatorID: user.ID,
+            Type:      store.ActivityTypeMemoComment,
+            Level:     store.ActivityLevelInfo,
+            Payload: &storepb.ActivityPayload{
+                MemoComment: &storepb.ActivityMemoCommentPayload{
+                    MemoId:        memoID,
+                    RelatedMemoId: relatedMemo.ID,
+                },
+            },
+        })
+        if err != nil {
+            return nil, status.Errorf(codes.Internal, "failed to create activity")
+        }
+
+        // 给被评论的 Memo 创建者发送通知
+        _, err = s.Store.CreateInbox(ctx, &store.Inbox{
+            SenderID:   user.ID,
+            ReceiverID: relatedMemo.CreatorID,
+            Status:     store.UNREAD,
+            Message: &storepb.InboxMessage{
+                Type:       storepb.InboxMessage_MEMO_COMMENT,
+                ActivityId: &activity.ID,
+            },
+        })
+        if err != nil {
+            return nil, status.Errorf(codes.Internal, "failed to create inbox")
+        }
+    }
+
+    return memo, nil
 }
 
 func (s *APIV1Service) ListMemoComments(ctx context.Context, request *v1pb.ListMemoCommentsRequest) (*v1pb.ListMemoCommentsResponse, error) {
